@@ -196,9 +196,12 @@ private func isCooked(_ mode: termios) -> Bool {
         defer { mode.restore() }
         let reader = KeyReader(fd: pty.slave)
         pty.type([0xE9])
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) { pty.type("t") }
-        // Límite holgado: en una máquina cargada (la CI) la «t» puede tardar; si el byte roto cortara la espera, el
-        // resultado sería `nil` enseguida, y si no, llega en cuanto se escribe.
+        // La «t», desde un hilo propio: la cola global de GCD solo tiene tantos hilos como núcleos, y en la CI otras
+        // pruebas los tienen bloqueados esperando a sus terminales, así que no la escribía nunca a tiempo.
+        Thread {
+            Thread.sleep(forTimeInterval: 0.1)
+            pty.type("t")
+        }.start()
         #expect(reader.next(timeout: 5_000) == .character("t"))
         pty.type([0xE9])
         #expect(reader.next(timeout: 150) == nil)   // un límite finito sí acaba
