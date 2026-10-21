@@ -9,6 +9,34 @@ anything, and everything can be undone.
 This repository holds the engine (`TriaKit`) and the `tria` command-line tool for macOS. The CLI works with your own
 Anthropic or OpenAI API key. The [Mac app](https://tria.lyn.cat) uses the same engine.
 
+## What it looks like
+
+Six documents with useless names in the inbox of a made-up Spanish company (`tria sort --dry-run`, with
+`TRIA_LANG=en`; the reasons come in the language of the documents):
+
+```text
+$ tria sort --dry-run
+Tria · Empresa · Anthropic claude-sonnet-5-5
+Looking for documents in 99-Pendiente…
+✓ 6 documents read in 6 s
+ 2/6  descarga (2).pdf
+      → 7-Facturas/Emitidas/2025/3T/Factura Emitida 2025-031 Distribuciones Norte - 2025-08-12.pdf
+      ● Confidence high · Factura emitida por EMPRESA EJEMPLO SL a Distribuciones Norte con fecha 12/08/2025, por tanto 3T de 2025.
+ 4/6  Escaneo 14-10-2026.pdf
+      → 8-Nominas/Nominas - 2025-09.pdf
+      ● Confidence high · Resumen de nóminas de septiembre 2025 de la propia sociedad, va a la carpeta de nóminas con el formato Nominas - AAAA-MM.
+ 6/6  Scan_20261011_0012.pdf
+      → 7-Facturas/Recibidas/2025/1T/Factura Imprenta Litoral - 2025-02-21.pdf
+      ● Confidence high · Factura emitida por Imprenta Litoral SL a la sociedad, por tanto recibida, con fecha de febrero de 2025 (1T).
+…
+6 ready
+Tokens: 1363 input · 932 output · 9544 cached · approximate cost: 0.0617 USD
+```
+
+Without `--dry-run`, `tria sort` opens a full-screen review where you approve, change or skip each proposal before
+anything moves. To measure it on your own archive, see `tria eval` below; `tria eval --synthetic` runs it on a
+bundled made-up archive.
+
 ## Principles
 
 1. **It always reads the content.** It never sorts by file name.
