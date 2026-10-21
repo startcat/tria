@@ -47,13 +47,18 @@ enum Presenter {
         /// `text` partido: la primera línea la arma `first` y las demás van dos columnas más adentro, con `role`.
         func block(_ text: String, path: Bool = false, role: StyleRole?, first: (String) -> String) -> [String] {
             let parts = width.map { TextWidth.wrap(text, width: max(1, $0 - indent.count - 2), path: path) } ?? [text]
-            return [indent + first(parts.first ?? "")]
-                + parts.dropFirst().map { part in indent + "  " + (role.map { style.paint(part, $0) } ?? part) }
+            // En trozos: de una sola vez, el compilador de Xcode 26 no acaba de comprobar los tipos a tiempo.
+            let head: String = indent + first(parts.first ?? "")
+            let rest: [String] = parts.dropFirst().map { part in
+                let painted: String = role.map { style.paint(part, $0) } ?? part
+                return indent + "  " + painted
+            }
+            return [head] + rest
         }
         let name = clean(item.file.lastPathComponent)
-        var lines = [" " + TextWidth.padLeft("\(index)/\(total)", to: counterWidth) + "  "
-                     + style.paint(width.map { TextWidth.truncateMiddle(name, to: max(1, $0 - indent.count)) } ?? name,
-                                   .strong)]
+        let counter: String = TextWidth.padLeft("\(index)/\(total)", to: counterWidth)
+        let shownName: String = width.map { TextWidth.truncateMiddle(name, to: max(1, $0 - indent.count)) } ?? name
+        var lines: [String] = [" " + counter + "  " + style.paint(shownName, .strong)]
         switch item.kind {
         case .proposal(let proposal, let action):
             let arrow = env.t(.itemProposal, "")
