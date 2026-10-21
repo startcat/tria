@@ -2,6 +2,8 @@
 
 **Drop it in the inbox. Tria reads it, names it and files it where it belongs.**
 
+![tria in a terminal: brew install startcat/tap/tria, then tria sort reads six badly named PDFs in the inbox, a full-screen review lists a new name and folder for each with the reason, all six are approved and moved, tria undo --last puts them back, tria log shows the batch, and tria sort --dry-run --json piped to jq prints each proposal's confidence and destination](docs/demo.gif)
+
 Tria sorts your documents with AI, following rules you write in plain language (`TRIA.md`). You drop documents in an
 inbox; Tria reads each one, proposes a clear name and a folder, and you decide. It never deletes or overwrites
 anything, and everything can be undone.
