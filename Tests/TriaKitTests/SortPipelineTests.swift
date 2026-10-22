@@ -799,8 +799,9 @@ private func names(_ request: LLMRequest, _ name: String) -> Bool {
 @Test func aServiceLimitMidBatchLetsTheReadsInFlightFinish() async throws {
     let dir = try TempDir()
     let ws = try WorkspaceFixture.make(in: dir)
-    let urls = try ["a.pdf", "b.pdf", "c.pdf", "d.pdf"].map { try inboxPDF(dir, $0, "Modelo 303 \($0)") }
+    let urls = try ["0.pdf", "a.pdf", "b.pdf", "c.pdf", "d.pdf"].map { try inboxPDF(dir, $0, "Modelo 303 \($0)") }
     let limit = LLMError.serviceLimit(TriaAPI.ErrorCode.balanceEmpty.rawValue)
+    // 0 es la primera lectura, que calienta la caché de prompts sola; las demás van en paralelo a partir de ahí.
     // El límite llega cuando b y c ya están en el proveedor, y estas lecturas lentas acaban cuando el lote ya tiene el
     // resultado de a: después del límite.
     let inFlight = Signal(after: 2), limited = Signal()
@@ -821,7 +822,7 @@ private func names(_ request: LLMRequest, _ name: String) -> Bool {
     #expect(plan.interruption == limit)
     let byName = Dictionary(uniqueKeysWithValues: plan.items.map { ($0.file.lastPathComponent, $0) })
     let oneRead = TokenUsage(inputTokens: 100, outputTokens: 10)
-    for name in ["b.pdf", "c.pdf"] {
+    for name in ["0.pdf", "b.pdf", "c.pdf"] {
         guard case .proposal? = byName[name]?.kind else { Issue.record("\(name): \(String(describing: byName[name]))"); continue }
         #expect(byName[name]?.readUsage == oneRead)
     }
@@ -829,23 +830,24 @@ private func names(_ request: LLMRequest, _ name: String) -> Bool {
         #expect(byName[name]?.kind == .pending(nil, .paused(TriaAPI.ErrorCode.balanceEmpty.rawValue)))
         #expect(byName[name]?.readUsage == nil)
     }
-    #expect(plan.sentDocuments == 2)
-    #expect(plan.usage == oneRead + oneRead)
+    #expect(plan.sentDocuments == 3)
+    #expect(plan.usage == oneRead + oneRead + oneRead)
     // d no se ha enviado: tras el límite no empieza ninguna lectura.
     let requests = await provider.requests
-    #expect(requests.count == 3)
+    #expect(requests.count == 4)
     #expect(!requests.contains { names($0, "d.pdf") })
 
     let cache = ProposalCache(workspace: ws)
-    #expect(cache.latest(sha256: try sha(of: urls[0], in: ws)) == nil)
-    #expect(cache.latest(sha256: try sha(of: urls[1], in: ws)) != nil)
+    #expect(cache.latest(sha256: try sha(of: urls[0], in: ws)) != nil)
+    #expect(cache.latest(sha256: try sha(of: urls[1], in: ws)) == nil)
     #expect(cache.latest(sha256: try sha(of: urls[2], in: ws)) != nil)
-    #expect(cache.latest(sha256: try sha(of: urls[3], in: ws)) == nil)
+    #expect(cache.latest(sha256: try sha(of: urls[3], in: ws)) != nil)
+    #expect(cache.latest(sha256: try sha(of: urls[4], in: ws)) == nil)
 
-    // Al reanudar se leen a y d; b y c salen de la caché y no se pagan otra vez.
+    // Al reanudar se leen a y d; 0, b y c salen de la caché y no se pagan otra vez.
     let again = try await SortPipeline(workspace: ws, provider: scripted([:])).plan()
     #expect(again.interruption == nil)
-    #expect(again.items.filter(\.fromCache).map(\.file.lastPathComponent) == ["b.pdf", "c.pdf"])
+    #expect(again.items.filter(\.fromCache).map(\.file.lastPathComponent) == ["0.pdf", "b.pdf", "c.pdf"])
     #expect(again.sentDocuments == 2)
 }
 
@@ -904,4 +906,61 @@ private func names(_ request: LLMRequest, _ name: String) -> Bool {
     await #expect(throws: LLMError.invalidKey) { try await SortPipeline(workspace: ws, provider: provider).plan() }
 
     #expect(ProposalCache(workspace: ws).latest(sha256: try sha(of: slow, in: ws)) == nil)
+}
+
+// MARK: - Calentar la caché de prompts antes de leer en paralelo
+
+/// Proveedor que cuenta las llamadas simultáneas. La primera tarda más, para que se vea quién más está en vuelo
+/// mientras dura; guarda el máximo de simultáneas durante ella y el máximo de todo el lote.
+private actor ConcurrencyProvider: LLMProvider {
+    nonisolated let id = ProviderID.anthropic
+    nonisolated let model = "claude-haiku-5-5"
+    private var current = 0
+    private var calls = 0
+    private var firstInFlight = false
+    private(set) var peakDuringFirst = 0
+    private(set) var peak = 0
+
+    func complete(_ request: LLMRequest) async throws -> LLMResponse {
+        calls += 1
+        let isFirst = calls == 1
+        current += 1
+        peak = max(peak, current)
+        if isFirst { firstInFlight = true }
+        if firstInFlight { peakDuringFirst = max(peakDuringFirst, current) }
+        try await Task.sleep(nanoseconds: isFirst ? 300_000_000 : 60_000_000)
+        if isFirst { firstInFlight = false }
+        current -= 1
+        return LLMResponse(text: modelo, usage: TokenUsage(inputTokens: 100, outputTokens: 10), model: model)
+    }
+}
+
+@Test func theFirstModelCallRunsAloneToWarmThePromptCache() async throws {
+    let dir = try TempDir()
+    let ws = try WorkspaceFixture.make(in: dir)
+    for name in ["a", "b", "c", "d", "e"] { try inboxPDF(dir, "\(name).pdf", "Modelo 303 \(name)") }
+    let provider = ConcurrencyProvider()
+
+    let plan = try await SortPipeline(workspace: ws, provider: provider, concurrency: 4, useCache: false).plan()
+
+    #expect(plan.sentDocuments == 5)
+    #expect(await provider.peakDuringFirst == 1)
+    #expect(await provider.peak > 1)
+}
+
+@Test func aProposalFromTheLocalCacheDoesNotCountAsWarmUp() async throws {
+    let dir = try TempDir()
+    let ws = try WorkspaceFixture.make(in: dir)
+    try inboxPDF(dir, "a.pdf", "Modelo 303 a")
+    _ = try await SortPipeline(workspace: ws, provider: scripted(["a.pdf": modelo])).plan()
+    for name in ["b", "c", "d", "e"] { try inboxPDF(dir, "\(name).pdf", "Modelo 303 \(name)") }
+    let provider = ConcurrencyProvider()
+
+    let plan = try await SortPipeline(workspace: ws, provider: provider, concurrency: 4).plan()
+
+    // a sale de la caché local: la primera llamada de verdad al modelo es la de b, y va sola.
+    #expect(plan.items.filter(\.fromCache).count == 1)
+    #expect(plan.sentDocuments == 4)
+    #expect(await provider.peakDuringFirst == 1)
+    #expect(await provider.peak > 1)
 }
