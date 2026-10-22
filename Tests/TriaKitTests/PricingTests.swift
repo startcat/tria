@@ -24,3 +24,10 @@ import Testing
     let openai = ProviderFactory.make(.openai, model: "gpt-5.4-nano", apiKey: "k")
     #expect(openai.id == .openai && openai.model == "gpt-5.4-nano")
 }
+
+@Test func sonnet46HasItsPrice() throws {
+    let usage = TokenUsage(inputTokens: 1_000_000, outputTokens: 1_000_000, cacheReadTokens: 1_000_000,
+                           cacheWriteTokens: 1_000_000)
+    let cost = try #require(Pricing.cost(usage, model: "claude-sonnet-4-6"))
+    #expect(abs(cost - (3.00 + 15.00 + 0.30 + 3.75)) < 0.000_001)
+}
