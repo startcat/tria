@@ -134,10 +134,10 @@ public struct SortPipeline: Sendable {
                     return (index, item, usage)
                 }
             }
-            // La caché de prompts del proveedor: la primera llamada escribe el prefijo común (reglas y perfil) y las
-            // siguientes lo leen, que cuesta una décima. Si arrancan todas a la vez, todas lo escriben. Por eso, hasta
-            // que acabe la primera lectura que llama de verdad al modelo (`usage` distinto de cero) va una sola en
-            // vuelo; las que salen de la caché local, los duplicados y los ilegibles no calientan nada y no esperan.
+            // La caché de prompts del proveedor: la primera llamada escribe el prefijo común (reglas, perfil y árbol de
+            // carpetas) y las siguientes lo leen, que cuesta una décima. Si arrancan todas a la vez, todas lo escriben.
+            // Por eso, hasta que acabe la primera lectura que llama de verdad al modelo (`usage` distinto de cero) va
+            // una sola en vuelo; las que salen de la caché local, los duplicados y los ilegibles no la calientan.
             var inFlight = 0
             var warm = concurrency == 1
             func fill() {

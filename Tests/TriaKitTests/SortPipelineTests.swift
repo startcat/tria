@@ -806,6 +806,9 @@ private func names(_ request: LLMRequest, _ name: String) -> Bool {
     // resultado de a: después del límite.
     let inFlight = Signal(after: 2), limited = Signal()
     let provider = SlowProvider { request in
+        // 0 vuelve en seguida: si esperara a `limited`, solo acabaría por el plazo de `wait(for:)`, y su aviso a
+        // `inFlight` adelantaría el límite antes de que b y c estén en el proveedor.
+        if names(request, "0.pdf") { return modelo }
         if names(request, "a.pdf") {
             try await wait(for: inFlight)
             throw limit
