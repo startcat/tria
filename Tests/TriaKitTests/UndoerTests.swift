@@ -263,6 +263,26 @@ private func fileContract(_ dir: TempDir, _ ws: Workspace) throws -> AppliedMove
     #expect(try contents(dir, "2-Contratos/Contrato telefonía.pdf") == "contrato")
 }
 
+@Test func undoingAUserMoveDoesNotTakeItOutOfAFolderThatIsNowProtected() throws {
+    let dir = try TempDir()
+    let ws = try archive(dir)
+    try dir.write("4-Correspondencia/Contrato telefonía.pdf", "contrato")
+    _ = move(ws, "4-Correspondencia/Contrato telefonía.pdf", to: "2-Contratos", batch: "b_move")
+    let rules = WorkspaceFixture.defaultRules
+        .replacingOccurrences(of: "protected:\n", with: "protected:\n  - \"2-Contratos/\"\n")
+    try rules.write(to: ws.rulesURL, atomically: true, encoding: .utf8)
+    let reopened = try ws.reloaded()
+    let before = try Journal(workspace: reopened).events()
+
+    let report = try Undoer(workspace: reopened).undo(batch: "b_move")
+
+    #expect(report.restored.isEmpty)
+    #expect(report.skipped.map(\.reason) == [.notMovable])
+    #expect(try contents(dir, "2-Contratos/Contrato telefonía.pdf") == "contrato")
+    #expect(!exists(dir, "4-Correspondencia/Contrato telefonía.pdf"))
+    #expect(try Journal(workspace: reopened).events() == before)
+}
+
 @Test func undoingTriasFilingFindsTheDocumentWhereTheUserMovedIt() throws {
     let dir = try TempDir()
     let ws = try archive(dir)

@@ -9,6 +9,9 @@ public struct SkippedUndo: Sendable, Equatable {
         /// Un movimiento del usuario no vuelve atrás: su carpeta de antes ya no existe, no es una carpeta o ya no se
         /// puede entrar en ella (protegida, la bandeja, los duplicados…). No se vuelve a crear.
         case previousFolderUnavailable
+        /// Un movimiento del usuario no vuelve atrás porque el documento ya no puede salir de donde está ahora: su
+        /// carpeta se ha vuelto protegida (o la bandeja, los duplicados…). Se queda donde está, como al moverlo.
+        case notMovable
     }
     public var operationID: String
     public var reason: Reason
@@ -80,8 +83,8 @@ public struct Undoer: Sendable {
                 report.skipped.append(SkippedUndo(operationID: operation.id, reason: .modified))
                 continue
             }
-            if operation.isUserMove && !canReturnToPreviousFolder(operation) {
-                report.skipped.append(SkippedUndo(operationID: operation.id, reason: .previousFolderUnavailable))
+            if operation.isUserMove, let reason = userMoveProblem(operation) {
+                report.skipped.append(SkippedUndo(operationID: operation.id, reason: reason))
                 continue
             }
             let target = Collision.uniqueRelativePath(operation.from, root: workspace.root)
@@ -125,17 +128,20 @@ public struct Undoer: Sendable {
         return workspace.containedURL(forRelative: path)
     }
 
-    /// Un movimiento del usuario solo vuelve a su carpeta de antes si sigue siendo una carpeta y se puede entrar en
-    /// ella, con las mismas comprobaciones que al mover (la carpeta y la ruta con el nombre).
-    private func canReturnToPreviousFolder(_ operation: JournalOperation) -> Bool {
-        let folder = (operation.from as NSString).deletingLastPathComponent
+    /// Un movimiento del usuario vuelve atrás con las mismas comprobaciones que al mover: el documento tiene que poder
+    /// salir de donde está ahora, y su carpeta de antes tiene que seguir siendo una carpeta en la que se puede entrar
+    /// (la carpeta y la ruta con el nombre). El motivo por el que no, o `nil` si puede volver.
+    private func userMoveProblem(_ operation: JournalOperation) -> SkippedUndo.Reason? {
         let validator = Validator(workspace: workspace)
+        guard validator.destinationError(operation.to) == nil else { return .notMovable }
+        let folder = (operation.from as NSString).deletingLastPathComponent
         guard validator.destinationError(folder) == nil, validator.destinationError(operation.from) == nil else {
-            return false
+            return .previousFolderUnavailable
         }
         var isFolder: ObjCBool = false
-        return FileManager.default.fileExists(atPath: workspace.url(forRelative: folder).path, isDirectory: &isFolder)
-            && isFolder.boolValue
+        guard FileManager.default.fileExists(atPath: workspace.url(forRelative: folder).path, isDirectory: &isFolder),
+              isFolder.boolValue else { return .previousFolderUnavailable }
+        return nil
     }
 
     private func appendUndone(_ operation: JournalOperation, from: String, to: String) throws {

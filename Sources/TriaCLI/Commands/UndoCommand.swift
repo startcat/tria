@@ -30,6 +30,7 @@ struct UndoCommand: TriaSubcommand {
             case .unsafe: env.say(.undoSkippedUnsafe, path)
             case .failed(let message): env.say(.undoSkippedFailed, path, message)
             case .previousFolderUnavailable: env.say(.undoSkippedFailed, path, "previous folder")
+            case .notMovable: env.say(.undoSkippedFailed, path, "protected folder")
             }
         }
         env.say(.undoDone, String(report.restored.count), String(report.skipped.count))
