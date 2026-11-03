@@ -127,3 +127,82 @@ private func event(_ id: String, _ state: JournalEvent.State, from: String = "99
     let event = JournalEvent(id: "op_1", batch: "b_1", op: .move, state: .done, from: "a", to: "b", corrected: false)
     #expect(event.corrected == nil)
 }
+
+// MARK: - Quién movió (spec «Mover a», sección «El registro»)
+
+@Test func aUserMoveIsJournaledByUserAndReadBack() throws {
+    let dir = try TempDir()
+    let journal = Journal(workspace: try WorkspaceFixture.make(in: dir))
+    try journal.append(JournalEvent(id: "op_1", batch: "b_1", op: .move, state: .done, from: "2-Contratos/Contrato telefonía.pdf",
+                                    to: "3-Hogar/Contrato telefonía.pdf", byUser: true))
+
+    let operation = try #require(try journal.operations().first)
+    #expect(operation.byUser)
+    #expect(operation.isUserMove)
+    #expect(try journal.batches().first?.byUser == true)
+}
+
+@Test func aBatchIsByUserOnlyIfAllItsOperationsAre() throws {
+    let dir = try TempDir()
+    let journal = Journal(workspace: try WorkspaceFixture.make(in: dir))
+    try journal.append(JournalEvent(id: "op_1", batch: "b_1", op: .move, state: .done, from: "a", to: "b", byUser: true))
+    try journal.append(JournalEvent(id: "op_2", batch: "b_1", op: .move, state: .done, from: "c", to: "d"))
+    #expect(try journal.batches().first?.byUser == false)
+}
+
+@Test func isUserMoveNeedsAMoveByTheUser() {
+    func operation(_ op: JournalEvent.Op, byUser: Bool) -> JournalOperation {
+        JournalOperation(id: "op_1", batch: "b_1", op: op, state: .done, from: "a", to: "b", sha256: nil, reason: nil,
+                         confidence: nil, restoredTo: nil, error: nil, startedAt: Date(), updatedAt: Date(), byUser: byUser)
+    }
+    #expect(operation(.move, byUser: true).isUserMove)
+    #expect(!operation(.move, byUser: false).isUserMove)
+    #expect(!operation(.trash, byUser: true).isUserMove)
+}
+
+@Test func oldLinesAndTriasMovesAreNotByUser() throws {
+    let dir = try TempDir()
+    let ws = try WorkspaceFixture.make(in: dir)
+    let old = #"{"batch":"b_20261001-101500_ab12","from":"99-Pendiente/a.pdf","id":"op_1","op":"move","state":"done","to":"7-Facturas/Recibidas/A.pdf","ts":"2026-10-01T10:15:00Z"}"#
+    try Data((old + "\n").utf8).write(to: ws.journalURL)
+    let journal = Journal(workspace: ws)
+    #expect(try journal.operations().first?.byUser == false)
+    #expect(try journal.batches().first?.byUser == false)
+
+    // Un movimiento de Tria (byUser: false) no escribe el campo.
+    let other = try TempDir()
+    let tria = Journal(workspace: try WorkspaceFixture.make(in: other))
+    try tria.append(JournalEvent(id: "op_2", batch: "b_2", op: .move, state: .done, from: "a", to: "b", byUser: false))
+    let text = try String(contentsOf: tria.url, encoding: .utf8)
+    #expect(!text.contains("byUser"))
+}
+
+/// La 1.0.0 del CLI lee el registro con campos fijos: una línea nueva tiene que seguir descodificándose con esa forma.
+@Test func aNewLineStillDecodesWithTheOldShape() throws {
+    struct OldEvent: Decodable {
+        enum Op: String, Decodable { case move, trash }
+        enum State: String, Decodable { case intent, done, failed, undone }
+        var id: String
+        var batch: String
+        var op: Op
+        var state: State
+        var from: String
+        var to: String
+        var sha256: String?
+        var ts: Date
+    }
+    let dir = try TempDir()
+    let journal = Journal(workspace: try WorkspaceFixture.make(in: dir))
+    try journal.append(JournalEvent(id: "op_1", batch: "b_1", op: .move, state: .done, from: "2-Contratos/Contrato telefonía.pdf",
+                                    to: "3-Hogar/Contrato telefonía.pdf", sha256: "abc", byUser: true))
+
+    let text = try String(contentsOf: journal.url, encoding: .utf8)
+    #expect(text.contains(#""op":"move""#))
+    #expect(text.contains(#""byUser":true"#))
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let old = try decoder.decode(OldEvent.self, from: Data(text.split(separator: "\n")[0].utf8))
+    #expect(old.op == .move)
+    #expect(old.state == .done)
+    #expect(old.to == "3-Hogar/Contrato telefonía.pdf")
+}

@@ -21,12 +21,15 @@ public struct JournalEvent: Codable, Sendable, Equatable {
     public var corrected: Bool?
     /// Los tokens que costó leer el documento, si llegó al proveedor. Si no se sabe, no se escribe.
     public var usage: TokenUsage?
+    /// `true` si el usuario movió el documento a mano («Mover a»); si no, no se escribe. Las líneas sin este campo,
+    /// como las de antes y las de los movimientos de Tria, no son del usuario.
+    public var byUser: Bool?
     public var ts: Date
 
     public init(id: String, batch: String, op: Op, state: State, from: String, to: String,
                 sha256: String? = nil, confidence: Confidence? = nil, reason: String? = nil,
                 provider: String? = nil, model: String? = nil, error: String? = nil,
-                corrected: Bool? = nil, usage: TokenUsage? = nil, ts: Date = Date()) {
+                corrected: Bool? = nil, usage: TokenUsage? = nil, ts: Date = Date(), byUser: Bool? = nil) {
         self.id = id
         self.batch = batch
         self.op = op
@@ -42,6 +45,8 @@ public struct JournalEvent: Codable, Sendable, Equatable {
         // `false` no se escribe: una línea sin corrección es igual que las de antes.
         self.corrected = corrected == true ? true : nil
         self.usage = usage
+        // Igual que `corrected`: `false` no se escribe.
+        self.byUser = byUser == true ? true : nil
         self.ts = ts
     }
 }
@@ -66,6 +71,11 @@ public struct JournalOperation: Sendable, Equatable {
     public var usage: TokenUsage? = nil
     /// El modelo que leyó el documento, si lo leyó la IA.
     public var model: String? = nil
+    /// Lo movió el usuario a mano. `false` si el registro no lo dice; se toma del primer evento de la operación.
+    public var byUser: Bool = false
+
+    /// Un movimiento hecho por el usuario (no por Tria ni una papelera).
+    public var isUserMove: Bool { op == .move && byUser }
 }
 
 public struct BatchSummary: Sendable, Equatable {
@@ -75,6 +85,8 @@ public struct BatchSummary: Sendable, Equatable {
     public var failed: Int
     public var undone: Int
     public var interrupted: Int
+    /// `true` si todas las operaciones del lote son movimientos del usuario.
+    public var byUser: Bool = false
 }
 
 public struct ReconcileResult: Sendable, Equatable {
@@ -143,7 +155,8 @@ public struct Journal: Sendable {
                     id: event.id, batch: event.batch, op: event.op, state: event.state, from: event.from,
                     to: event.to, sha256: event.sha256, reason: event.reason, confidence: event.confidence,
                     restoredTo: nil, error: event.error, startedAt: event.ts, updatedAt: event.ts,
-                    corrected: event.corrected ?? false, usage: event.usage, model: event.model)
+                    corrected: event.corrected ?? false, usage: event.usage, model: event.model,
+                    byUser: event.byUser ?? false)
                 continue
             }
             operation.state = event.state
@@ -163,7 +176,9 @@ public struct Journal: Sendable {
         var summaries: [String: BatchSummary] = [:]
         for operation in try operations() {
             var summary = summaries[operation.batch] ?? BatchSummary(
-                id: operation.batch, startedAt: operation.startedAt, done: 0, failed: 0, undone: 0, interrupted: 0)
+                id: operation.batch, startedAt: operation.startedAt, done: 0, failed: 0, undone: 0, interrupted: 0,
+                byUser: true)
+            summary.byUser = summary.byUser && operation.byUser
             summary.startedAt = min(summary.startedAt, operation.startedAt)
             switch operation.state {
             case .done: summary.done += 1
