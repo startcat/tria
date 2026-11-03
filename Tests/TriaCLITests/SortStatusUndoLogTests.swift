@@ -311,3 +311,70 @@ private func readWithHaiku(_ cli: CLIHarness, _ answers: [String: String]) async
     #expect(cli.terminal.transcript.contains(
         "alta.pdf: propuesta: 1-Modelos Tributarios/Modelo 303 - IVA/Modelo 303 - 2023 - 1T.pdf"))
 }
+
+// MARK: - «Mover a»: el CLI cuenta lo que mueve el usuario
+
+private let filed = "1-Modelos Tributarios/Modelo 303 - IVA/Modelo 303 - 2023 - 1T.pdf"
+private let movedTo = "7-Facturas/Recibidas/Modelo 303 - 2023 - 1T.pdf"
+
+/// Tria archiva `alta.pdf` y el usuario lo mueve después a `7-Facturas/Recibidas`. Devuelve el lote de Tria y el del movimiento.
+private func filedThenMoved(_ cli: CLIHarness) async throws -> (workspace: Workspace, tria: String, move: String) {
+    let ws = try WorkspaceFixture.make(in: cli.dir)
+    try inboxPDF(cli.dir, "alta.pdf")
+    try await cli.run(["sort", "--auto"])
+    let tria = try #require(try Journal(workspace: ws).batches().first).id
+    let report = Executor(workspace: ws).relocate([RelocationItem(source: filed, folder: "7-Facturas/Recibidas")],
+                                                  batch: "b_move")
+    #expect(report.failed.isEmpty)
+    return (ws, tria, report.batch)
+}
+
+@Test func logMarksABatchOfUserMoves() async throws {
+    let cli = try CLIHarness(provider: answering(["alta.pdf": modelo]))
+    let (_, _, move) = try await filedThenMoved(cli)
+    #expect(try await cli.run(["log"]) == 0)
+    let lines = cli.terminal.transcript.split(separator: "\n").map(String.init)
+    #expect(lines.contains { $0.hasPrefix(move) && $0.contains("1 movidos por ti · 0 deshechos · 0 fallidos") })
+    #expect(lines.contains { $0.contains("1 movidos · 0 deshechos") && !$0.contains("por ti") })
+    #expect(try await cli.run(["log", move]) == 0)
+    #expect(cli.terminal.transcript.contains("\(filed) → \(movedTo) (movido por ti)"))
+}
+
+@Test func undoOfTriasBatchFindsAMovedDocument() async throws {
+    let cli = try CLIHarness(provider: answering(["alta.pdf": modelo]))
+    let (_, tria, _) = try await filedThenMoved(cli)
+    #expect(try await cli.run(["undo", tria]) == 0)
+    #expect(exists(cli, "99-Pendiente/alta.pdf"))
+    #expect(!exists(cli, movedTo))
+    #expect(cli.terminal.transcript.contains("Restaurados: 1 · omitidos: 0."))
+}
+
+@Test func undoShowsWhereAMovedDocumentIsNowWhenItIsSkipped() async throws {
+    let cli = try CLIHarness(provider: answering(["alta.pdf": modelo]))
+    let (_, tria, _) = try await filedThenMoved(cli)
+    try cli.dir.write(movedTo, "cambiado")
+    #expect(try await cli.run(["undo", tria]) == 0)
+    #expect(cli.terminal.transcript.contains("\(movedTo): ha cambiado desde que se movió"))
+    #expect(!cli.terminal.transcript.contains("\(filed):"))
+}
+
+@Test func undoSaysWhenThePreviousFolderIsGone() async throws {
+    let cli = try CLIHarness(provider: answering(["alta.pdf": modelo]))
+    let (_, _, move) = try await filedThenMoved(cli)
+    try FileManager.default.removeItem(at: cli.dir.url.appendingPathComponent("1-Modelos Tributarios/Modelo 303 - IVA"))
+    #expect(try await cli.run(["undo", move]) == 0)
+    #expect(cli.terminal.transcript.contains("\(movedTo): su carpeta de antes ya no existe o está protegida"))
+    #expect(cli.terminal.transcript.contains("Restaurados: 0 · omitidos: 1."))
+    #expect(exists(cli, movedTo))
+}
+
+@Test func undoSaysWhenTheFolderItIsInIsNowProtected() async throws {
+    let cli = try CLIHarness(provider: answering(["alta.pdf": modelo]))
+    let (ws, _, move) = try await filedThenMoved(cli)
+    let rules = WorkspaceFixture.defaultRules
+        .replacingOccurrences(of: "protected:\n", with: "protected:\n  - \"7-Facturas/Recibidas/\"\n")
+    try rules.write(to: ws.rulesURL, atomically: true, encoding: .utf8)
+    #expect(try await cli.run(["undo", move]) == 0)
+    #expect(cli.terminal.transcript.contains("\(movedTo): la carpeta donde está ahora está protegida"))
+    #expect(exists(cli, movedTo))
+}

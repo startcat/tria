@@ -188,7 +188,7 @@ enum Presenter {
         func width(_ value: (BatchSummary) -> Int) -> Int { batches.map { String(value($0)).count }.max() ?? 0 }
         let done = width(\.done), undone = width(\.undone), failed = width(\.failed)
         return batches.map { batch in
-            env.t(.logBatch, TextWidth.singleLine(batch.id), style.paint(formatter.string(from: batch.startedAt), .accent),
+            env.t(batch.byUser ? .logBatchByUser : .logBatch, TextWidth.singleLine(batch.id), style.paint(formatter.string(from: batch.startedAt), .accent),
                   TextWidth.padLeft(String(batch.done), to: done), TextWidth.padLeft(String(batch.undone), to: undone),
                   TextWidth.padLeft(String(batch.failed), to: failed))
         }
@@ -212,7 +212,7 @@ enum Presenter {
             symbol = "…"
             role = .warning
         }
-        return env.t(.logOperation, style.paint(symbol, role), TextWidth.singleLine(operation.from),
+        return env.t(operation.byUser ? .logOperationByUser : .logOperation, style.paint(symbol, role), TextWidth.singleLine(operation.from),
                      TextWidth.singleLine(operation.to))
     }
 

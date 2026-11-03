@@ -41,8 +41,9 @@ public enum L10n {
         case editFolder, editName, editInvalid, applied, failedMove, pendingLeftOne, pendingLeft, suggestionOffer
         case suggestionSaved
         case statusUnprocessed, statusInUse, statusDuplicate, statusProposed, statusPending
-        case undoDone, undoNothing, undoSkippedMissing, undoSkippedModified, undoSkippedUnsafe, undoSkippedFailed
-        case logEmpty, logBatch, logOperation
+        case undoDone, undoNothing, undoSkippedMissing, undoSkippedModified, undoSkippedUnsafe, undoSkippedFailed,
+        undoSkippedFolder, undoSkippedProtected
+        case logEmpty, logBatch, logOperation, logBatchByUser, logOperationByUser
         case evalNeedsArchive, evalEstimate, evalFolder, evalFilename, evalPending, evalByConfidence
         case evalRunning, evalDoneOne, evalDoneMany, learnRunning, learnDone
         case evalSaved, evalRegressed, evalNoRegression, evalInterrupted, evalBaselineSkipped
@@ -384,11 +385,22 @@ public enum L10n {
                                          "  {0}: untrustworthy journal entry (path outside the workspace or no hash); left alone")
         case .undoSkippedFailed: return ("  {0}: no s'ha pogut tornar ({1})", "  {0}: no se ha podido devolver ({1})",
                                          "  {0}: could not be moved back ({1})")
+        case .undoSkippedFolder: return ("  {0}: la seva carpeta d'abans ja no hi és o està protegida",
+                                         "  {0}: su carpeta de antes ya no existe o está protegida",
+                                         "  {0}: its previous folder is gone or protected")
+        case .undoSkippedProtected: return ("  {0}: la carpeta on és ara està protegida; no es toca",
+                                            "  {0}: la carpeta donde está ahora está protegida; no se toca",
+                                            "  {0}: the folder it is in now is protected; left alone")
         case .logEmpty: return ("Encara no hi ha moviments.", "Aún no hay movimientos.", "No moves yet.")
         case .logBatch: return ("{0} · {1} · {2} moguts · {3} desfets · {4} fallits",
                                 "{0} · {1} · {2} movidos · {3} deshechos · {4} fallidos",
                                 "{0} · {1} · {2} moved · {3} undone · {4} failed")
         case .logOperation: return ("  {0} {1} → {2}", "  {0} {1} → {2}", "  {0} {1} → {2}")
+        case .logBatchByUser: return ("{0} · {1} · {2} moguts per tu · {3} desfets · {4} fallits",
+                                      "{0} · {1} · {2} movidos por ti · {3} deshechos · {4} fallidos",
+                                      "{0} · {1} · {2} moved by you · {3} undone · {4} failed")
+        case .logOperationByUser: return ("  {0} {1} → {2} (mogut per tu)", "  {0} {1} → {2} (movido por ti)",
+                                          "  {0} {1} → {2} (moved by you)")
         case .evalNeedsArchive: return ("Indica la carpeta ja ordenada o fes servir --synthetic.",
                                         "Indica la carpeta ya ordenada o usa --synthetic.",
                                         "Give an already sorted folder or use --synthetic.")

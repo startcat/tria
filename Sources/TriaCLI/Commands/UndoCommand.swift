@@ -20,17 +20,20 @@ struct UndoCommand: TriaSubcommand {
             env.say(.undoNothing)
             return
         }
-        let operations = Dictionary(try Journal(workspace: workspace).operations().map { ($0.id, $0) },
-                                    uniquingKeysWith: { first, _ in first })
+        let all = try Journal(workspace: workspace).operations()
+        let operations = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let index = JournalIndex(operations: all)
         for skipped in report.skipped {
-            let path = operations[skipped.operationID]?.to ?? skipped.operationID
+            // Si el usuario movió lo que dejó Tria, se muestra dónde está ahora, no donde lo dejó Tria.
+            let path = operations[skipped.operationID].map { $0.isUserMove ? $0.to : index.currentPath(of: $0) }
+                ?? skipped.operationID
             switch skipped.reason {
             case .missing: env.say(.undoSkippedMissing, path)
             case .modified: env.say(.undoSkippedModified, path)
             case .unsafe: env.say(.undoSkippedUnsafe, path)
             case .failed(let message): env.say(.undoSkippedFailed, path, message)
-            case .previousFolderUnavailable: env.say(.undoSkippedFailed, path, "previous folder")
-            case .notMovable: env.say(.undoSkippedFailed, path, "protected folder")
+            case .previousFolderUnavailable: env.say(.undoSkippedFolder, path)
+            case .notMovable: env.say(.undoSkippedProtected, path)
             }
         }
         env.say(.undoDone, String(report.restored.count), String(report.skipped.count))
