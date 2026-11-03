@@ -14,6 +14,8 @@ public struct MoveChain: Sendable {
     /// Operación → el primer movimiento del usuario que la siguió.
     private let nextID: [String: String]
 
+    /// `operations` en el orden del registro, tal como las da `Journal.operations()`: a igual segundo, decide el orden
+    /// en que llegan. No vale `JournalIndex.operations`, que va de la más reciente a la más antigua.
     public init(operations: [JournalOperation]) {
         // En el orden del registro: por fecha de inicio y, a igual fecha (el registro guarda segundos enteros), en el
         // orden en que llegan. Cada enlace va hacia atrás en este orden, así que la cadena nunca da la vuelta.
