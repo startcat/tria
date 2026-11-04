@@ -179,10 +179,13 @@ private func contents(_ dir: TempDir, _ relative: String) throws -> String {
         [RelocationItem(source: "4-Correspondencia/Contrato telefonía.pdf", folder: "2-Contratos")])
 
     #expect(report.moved.isEmpty)
-    guard case .unreadable = report.failed.first?.problem else {
+    guard case .unreadable(let message) = report.failed.first?.problem else {
         Issue.record("se esperaba .unreadable y llegó \(String(describing: report.failed.first?.problem))")
         return
     }
+    // El problema es para el usuario: la frase del sistema, no el volcado del error.
+    #expect(!message.isEmpty)
+    #expect(!message.contains("Error Domain"))
     #expect(exists(dir, "4-Correspondencia/Contrato telefonía.pdf"))
     #expect(try Journal(workspace: ws).events().isEmpty)
 }
@@ -200,14 +203,18 @@ private func contents(_ dir: TempDir, _ relative: String) throws -> String {
         [RelocationItem(source: "4-Correspondencia/Contrato telefonía.pdf", folder: "2-Contratos")])
 
     #expect(report.moved.isEmpty)
-    guard case .failed = report.failed.first?.problem else {
+    guard case .failed(let message) = report.failed.first?.problem else {
         Issue.record("se esperaba .failed y llegó \(String(describing: report.failed.first?.problem))")
         return
     }
+    // Al usuario, la frase del sistema; al registro, el error entero, para saber qué pasó.
+    #expect(!message.isEmpty)
+    #expect(!message.contains("Error Domain"))
     #expect(exists(dir, "4-Correspondencia/Contrato telefonía.pdf"))
     let events = try Journal(workspace: ws).events()
     #expect(events.map(\.state) == [.intent, .failed])
     #expect(events.allSatisfy { $0.byUser == true })
+    #expect(events.last?.error?.contains("NSCocoaErrorDomain") == true)
 }
 
 @Test func oneFailureDoesNotStopTheOthers() throws {

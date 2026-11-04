@@ -25,11 +25,11 @@ public enum RelocationProblem: Sendable, Equatable {
     case sameFolder
     /// La carpeta de destino no existe o no es una carpeta.
     case folderMissing
-    /// No se ha podido leer para calcular su hash.
+    /// No se ha podido leer para calcular su hash. Con la frase del sistema (`localizedDescription`).
     case unreadable(String)
     /// La carpeta de destino no vale (`Validator.destinationError`).
     case destination(ValidationError)
-    /// Ha fallado al moverlo.
+    /// Ha fallado al moverlo. Con la frase del sistema (`localizedDescription`); el registro guarda el error entero.
     case failed(String)
 }
 

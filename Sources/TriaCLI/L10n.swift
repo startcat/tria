@@ -41,8 +41,8 @@ public enum L10n {
         case editFolder, editName, editInvalid, applied, failedMove, pendingLeftOne, pendingLeft, suggestionOffer
         case suggestionSaved
         case statusUnprocessed, statusInUse, statusDuplicate, statusProposed, statusPending
-        case undoDone, undoNothing, undoSkippedMissing, undoSkippedModified, undoSkippedUnsafe, undoSkippedFailed,
-        undoSkippedFolder, undoSkippedProtected
+        case undoDone, undoNothing, undoSkippedMissing, undoSkippedMissingUserMove, undoSkippedModified,
+        undoSkippedUnsafe, undoSkippedFailed, undoSkippedFolder, undoSkippedProtected
         case logEmpty, logBatch, logOperation, logBatchByUser, logOperationByUser
         case evalNeedsArchive, evalEstimate, evalFolder, evalFilename, evalPending, evalByConfidence
         case evalRunning, evalDoneOne, evalDoneMany, learnRunning, learnDone
@@ -378,6 +378,9 @@ public enum L10n {
         case .undoNothing: return ("No hi ha res per desfer.", "No hay nada que deshacer.", "Nothing to undo.")
         case .undoSkippedMissing: return ("  {0}: ja no és on la Tria el va deixar", "  {0}: ya no está donde Tria lo dejó",
                                           "  {0}: no longer where Tria left it")
+        case .undoSkippedMissingUserMove: return ("  {0}: ja no és on el vas deixar",
+                                                  "  {0}: ya no está donde lo dejaste",
+                                                  "  {0}: no longer where you left it")
         case .undoSkippedModified: return ("  {0}: ha canviat des que es va moure", "  {0}: ha cambiado desde que se movió",
                                            "  {0}: changed since it was moved")
         case .undoSkippedUnsafe: return ("  {0}: el registre no és fiable (ruta fora de l'espai o sense empremta); no es toca",

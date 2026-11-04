@@ -378,3 +378,17 @@ private func filedThenMoved(_ cli: CLIHarness) async throws -> (workspace: Works
     #expect(cli.terminal.transcript.contains("\(movedTo): la carpeta donde está ahora está protegida"))
     #expect(exists(cli, movedTo))
 }
+
+/// Lo que movió el usuario y ya no está donde lo dejó no lo dejó Tria: el aviso habla de él, no de Tria.
+@Test func undoOfAUserMoveSaysTheUserLeftItThere() async throws {
+    let cli = try CLIHarness(provider: answering(["alta.pdf": modelo]))
+    let (ws, _, move) = try await filedThenMoved(cli)
+    let again = Executor(workspace: ws).relocate([RelocationItem(source: movedTo,
+                                                                 folder: "1-Modelos Tributarios/Modelo 303 - IVA")],
+                                                 batch: "b_move2")
+    #expect(again.failed.isEmpty)
+    #expect(try await cli.run(["undo", move]) == 0)
+    #expect(cli.terminal.transcript.contains("\(movedTo): ya no está donde lo dejaste"))
+    #expect(!cli.terminal.transcript.contains("donde Tria lo dejó"))
+    #expect(exists(cli, filed))
+}

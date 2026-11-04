@@ -24,10 +24,12 @@ struct UndoCommand: TriaSubcommand {
         let operations = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let index = JournalIndex(operations: all)
         for skipped in report.skipped {
+            let operation = operations[skipped.operationID]
             // Si el usuario movió lo que dejó Tria, se muestra dónde está ahora, no donde lo dejó Tria.
-            let path = operations[skipped.operationID].map { $0.isUserMove ? $0.to : index.currentPath(of: $0) }
-                ?? skipped.operationID
+            let path = operation.map { $0.isUserMove ? $0.to : index.currentPath(of: $0) } ?? skipped.operationID
             switch skipped.reason {
+            // Lo que movió el usuario no lo dejó Tria allí: lo dejó él.
+            case .missing where operation?.isUserMove == true: env.say(.undoSkippedMissingUserMove, path)
             case .missing: env.say(.undoSkippedMissing, path)
             case .modified: env.say(.undoSkippedModified, path)
             case .unsafe: env.say(.undoSkippedUnsafe, path)

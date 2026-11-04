@@ -188,7 +188,8 @@ extension Executor {
             do {
                 sha256 = try Hashing.sha256(of: url)
             } catch {
-                report.failed.append(FailedRelocation(source: item.source, problem: .unreadable(String(describing: error))))
+                report.failed.append(FailedRelocation(source: item.source,
+                                                      problem: .unreadable(error.localizedDescription)))
                 continue
             }
             let id = Journal.newOperationID()
@@ -201,8 +202,11 @@ extension Executor {
                                                     createsFolders: false) { event($0, to: $1) }
                 report.moved.append(AppliedMove(operationID: id, from: item.source, to: to))
             } catch {
+                // Al registro, el error entero, para saber qué pasó; al informe, que lo lee el usuario, la frase del
+                // sistema, como al deshacer (`Undoer`).
                 try? journal.append(event(.failed, to: "", error: String(describing: error)))
-                report.failed.append(FailedRelocation(source: item.source, problem: .failed(String(describing: error))))
+                report.failed.append(FailedRelocation(source: item.source,
+                                                      problem: .failed(error.localizedDescription)))
             }
         }
         return report
