@@ -162,3 +162,182 @@ private func forge(_ ws: Workspace, from: String, to: String, sha: String?) thro
     #expect(try undoer.undo(operation: id) == UndoReport(restored: [], skipped: []))
     #expect(try undoer.undo(operation: "op_nope") == UndoReport(restored: [], skipped: []))
 }
+
+// MARK: - Con movimientos del usuario («Mover a»)
+
+private func archive(_ dir: TempDir) throws -> Workspace {
+    try WorkspaceFixture.make(in: dir, folders: WorkspaceFixture.defaultFolders + ["2-Contratos", "4-Correspondencia"])
+}
+
+private func exists(_ dir: TempDir, _ relative: String) -> Bool {
+    FileManager.default.fileExists(atPath: dir.url.appendingPathComponent(relative).path)
+}
+
+private func contents(_ dir: TempDir, _ relative: String) throws -> String {
+    try String(contentsOf: dir.url.appendingPathComponent(relative), encoding: .utf8)
+}
+
+private func move(_ ws: Workspace, _ source: String, to folder: String, batch: String) -> RelocationReport {
+    Executor(workspace: ws).relocate([RelocationItem(source: source, folder: folder)], batch: batch)
+}
+
+/// Tria archiva lo que hay en la bandeja como «4-Correspondencia/Contrato telefonía.pdf».
+private func fileContract(_ dir: TempDir, _ ws: Workspace) throws -> AppliedMove {
+    try dir.write("99-Pendiente/contrato.pdf", "contrato")
+    let report = Executor(workspace: ws).apply([
+        ApprovedItem(action: FilingAction(kind: .file, source: "99-Pendiente/contrato.pdf",
+                                          destination: "4-Correspondencia/Contrato telefonía.pdf")),
+    ], batch: "b_tria")
+    return try #require(report.applied.first)
+}
+
+@Test func undoingAUserMovePutsItBackInTheFolderBefore() throws {
+    let dir = try TempDir()
+    let ws = try archive(dir)
+    try dir.write("4-Correspondencia/Contrato telefonía.pdf", "contrato")
+    #expect(move(ws, "4-Correspondencia/Contrato telefonía.pdf", to: "2-Contratos", batch: "b_move").failed.isEmpty)
+
+    let report = try Undoer(workspace: ws).undo(batch: "b_move")
+
+    #expect(report.skipped.isEmpty)
+    #expect(report.restored.map(\.from) == ["2-Contratos/Contrato telefonía.pdf"])
+    #expect(report.restored.map(\.to) == ["4-Correspondencia/Contrato telefonía.pdf"])
+    #expect(try contents(dir, "4-Correspondencia/Contrato telefonía.pdf") == "contrato")
+    #expect(!exists(dir, "2-Contratos/Contrato telefonía.pdf"))
+    let operation = try #require(try Journal(workspace: ws).operations().first)
+    #expect(operation.state == .undone)
+    #expect(operation.restoredTo == "4-Correspondencia/Contrato telefonía.pdf")
+    #expect(try Journal(workspace: ws).events().last?.byUser == true)
+}
+
+@Test func undoingAUserMoveDoesNotRecreateAMissingFolder() throws {
+    let dir = try TempDir()
+    let ws = try archive(dir)
+    try dir.write("4-Correspondencia/Contrato telefonía.pdf", "contrato")
+    _ = move(ws, "4-Correspondencia/Contrato telefonía.pdf", to: "2-Contratos", batch: "b_move")
+    try FileManager.default.removeItem(at: dir.url.appendingPathComponent("4-Correspondencia"))
+
+    let report = try Undoer(workspace: ws).undo(batch: "b_move")
+
+    #expect(report.restored.isEmpty)
+    #expect(report.skipped.map(\.reason) == [.previousFolderUnavailable])
+    #expect(!exists(dir, "4-Correspondencia"))
+    #expect(try contents(dir, "2-Contratos/Contrato telefonía.pdf") == "contrato")
+    #expect(try Journal(workspace: ws).operations().map(\.state) == [.done])
+}
+
+@Test func undoingAUserMoveRefusesAFolderThatIsNowProtected() throws {
+    let dir = try TempDir()
+    let ws = try archive(dir)
+    try dir.write("4-Correspondencia/Contrato telefonía.pdf", "contrato")
+    _ = move(ws, "4-Correspondencia/Contrato telefonía.pdf", to: "2-Contratos", batch: "b_move")
+    let rules = WorkspaceFixture.defaultRules
+        .replacingOccurrences(of: "protected:\n", with: "protected:\n  - \"4-Correspondencia/\"\n")
+    try rules.write(to: ws.rulesURL, atomically: true, encoding: .utf8)
+    let reopened = try ws.reloaded()
+    #expect(reopened.protectedPaths.contains("4-Correspondencia"))
+
+    let report = try Undoer(workspace: reopened).undo(batch: "b_move")
+
+    #expect(report.restored.isEmpty)
+    #expect(report.skipped.map(\.reason) == [.previousFolderUnavailable])
+    #expect(!exists(dir, "4-Correspondencia/Contrato telefonía.pdf"))
+    #expect(try contents(dir, "2-Contratos/Contrato telefonía.pdf") == "contrato")
+}
+
+@Test func undoingAUserMoveRefusesANameThatIsNowProtected() throws {
+    let dir = try TempDir()
+    let ws = try archive(dir)
+    try dir.write("4-Correspondencia/Contrato telefonía.pdf", "contrato")
+    _ = move(ws, "4-Correspondencia/Contrato telefonía.pdf", to: "2-Contratos", batch: "b_move")
+    // Protege la ruta con el nombre y no la carpeta, como "7-Facturas/20*" con "7-Facturas/2024.pdf".
+    let rules = WorkspaceFixture.defaultRules
+        .replacingOccurrences(of: "protected:\n", with: "protected:\n  - \"4-Correspondencia/Contrato*\"\n")
+    try rules.write(to: ws.rulesURL, atomically: true, encoding: .utf8)
+    let reopened = try ws.reloaded()
+    #expect(!reopened.protectedPaths.contains("4-Correspondencia"))
+
+    let report = try Undoer(workspace: reopened).undo(batch: "b_move")
+
+    #expect(report.skipped.map(\.reason) == [.previousFolderUnavailable])
+    #expect(try contents(dir, "2-Contratos/Contrato telefonía.pdf") == "contrato")
+}
+
+@Test func undoingAUserMoveDoesNotTakeItOutOfAFolderThatIsNowProtected() throws {
+    let dir = try TempDir()
+    let ws = try archive(dir)
+    try dir.write("4-Correspondencia/Contrato telefonía.pdf", "contrato")
+    _ = move(ws, "4-Correspondencia/Contrato telefonía.pdf", to: "2-Contratos", batch: "b_move")
+    let rules = WorkspaceFixture.defaultRules
+        .replacingOccurrences(of: "protected:\n", with: "protected:\n  - \"2-Contratos/\"\n")
+    try rules.write(to: ws.rulesURL, atomically: true, encoding: .utf8)
+    let reopened = try ws.reloaded()
+    let before = try Journal(workspace: reopened).events()
+
+    let report = try Undoer(workspace: reopened).undo(batch: "b_move")
+
+    #expect(report.restored.isEmpty)
+    #expect(report.skipped.map(\.reason) == [.notMovable])
+    #expect(try contents(dir, "2-Contratos/Contrato telefonía.pdf") == "contrato")
+    #expect(!exists(dir, "4-Correspondencia/Contrato telefonía.pdf"))
+    #expect(try Journal(workspace: reopened).events() == before)
+}
+
+@Test func undoingTriasFilingFindsTheDocumentWhereTheUserMovedIt() throws {
+    let dir = try TempDir()
+    let ws = try archive(dir)
+    let filing = try fileContract(dir, ws)
+    _ = move(ws, "4-Correspondencia/Contrato telefonía.pdf", to: "1-Modelos Tributarios", batch: "b_m1")
+    _ = move(ws, "1-Modelos Tributarios/Contrato telefonía.pdf", to: "2-Contratos", batch: "b_m2")
+    let before = try Journal(workspace: ws).index()
+    #expect(before.operation(at: "2-Contratos/Contrato telefonía.pdf")?.id == filing.operationID)
+    #expect(before.lastUserMove(at: "2-Contratos/Contrato telefonía.pdf")?.batch == "b_m2")
+
+    let report = try Undoer(workspace: ws).undo(operation: filing.operationID)
+
+    #expect(report.skipped.isEmpty)
+    #expect(report.restored == [AppliedMove(operationID: filing.operationID, from: "2-Contratos/Contrato telefonía.pdf",
+                                            to: "99-Pendiente/contrato.pdf")])
+    #expect(try contents(dir, "99-Pendiente/contrato.pdf") == "contrato")
+    #expect(!exists(dir, "2-Contratos/Contrato telefonía.pdf"))
+    let operations = try Journal(workspace: ws).operations()
+    #expect(operations.count == 3)
+    #expect(operations.allSatisfy { $0.state == .undone && $0.restoredTo == "99-Pendiente/contrato.pdf" })
+    let after = try Journal(workspace: ws).index()
+    #expect(after.operation(at: "2-Contratos/Contrato telefonía.pdf") == nil)
+    #expect(after.lastUserMove(at: "2-Contratos/Contrato telefonía.pdf") == nil)
+}
+
+@Test func undoingTriasBatchAfterAMoveBringsBackBoth() throws {
+    let dir = try TempDir()
+    let ws = try archive(dir)
+    try dir.write("99-Pendiente/a.pdf", "A")
+    try dir.write("99-Pendiente/b.pdf", "B")
+    _ = fileTwo(dir, ws, batch: "b_1")
+    #expect(move(ws, "7-Facturas/Recibidas/A.pdf", to: "2-Contratos", batch: "b_move").failed.isEmpty)
+
+    let report = try Undoer(workspace: ws).undo(batch: "b_1")
+
+    #expect(report.skipped.isEmpty)
+    #expect(Set(report.restored.map(\.to)) == ["99-Pendiente/a.pdf", "99-Pendiente/b.pdf"])
+    #expect(try contents(dir, "99-Pendiente/a.pdf") == "A")
+    #expect(try contents(dir, "99-Pendiente/b.pdf") == "B")
+    #expect(!exists(dir, "2-Contratos/A.pdf"))
+    #expect(try Journal(workspace: ws).operations().allSatisfy { $0.state == .undone })
+}
+
+@Test func undoingTriasFilingAfterAMoveSkipsAModifiedDocument() throws {   // Review Focus 1
+    let dir = try TempDir()
+    let ws = try archive(dir)
+    let filing = try fileContract(dir, ws)
+    _ = move(ws, "4-Correspondencia/Contrato telefonía.pdf", to: "2-Contratos", batch: "b_move")
+    try dir.write("2-Contratos/Contrato telefonía.pdf", "contrato firmado")
+
+    let report = try Undoer(workspace: ws).undo(operation: filing.operationID)
+
+    #expect(report.restored.isEmpty)
+    #expect(report.skipped == [SkippedUndo(operationID: filing.operationID, reason: .modified)])
+    #expect(try contents(dir, "2-Contratos/Contrato telefonía.pdf") == "contrato firmado")
+    #expect(!exists(dir, "99-Pendiente/contrato.pdf"))
+    #expect(try Journal(workspace: ws).operations().map(\.state) == [.done, .done])
+}

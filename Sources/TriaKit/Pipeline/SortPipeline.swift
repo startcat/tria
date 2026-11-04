@@ -248,9 +248,11 @@ public struct SortPipeline: Sendable {
         return items
     }
 
-    /// Hashes de lo que el usuario ha deshecho: el modo automático no lo vuelve a aplicar (spec §6.6).
+    /// Hashes de lo que el usuario ha deshecho: el modo automático no lo vuelve a aplicar (spec §6.6). Solo cuenta
+    /// lo que volvió a la bandeja: deshacer un movimiento del usuario lo devuelve a otra carpeta del archivo.
     private static func undoneHashes(_ workspace: Workspace) throws -> Set<String> {
-        Set(try Journal(workspace: workspace).operations().filter { $0.state == .undone }.compactMap(\.sha256))
+        Set(try Journal(workspace: workspace).operations().filter { $0.state == .undone && !$0.isUserMove }
+            .compactMap(\.sha256))
     }
 
     /// Con proveedor y modelo, la entrada que sort tendría en cuenta (`ProposalCache.reusable`); sin ellos, la última

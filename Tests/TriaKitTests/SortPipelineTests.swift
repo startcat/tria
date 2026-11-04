@@ -246,6 +246,28 @@ private func kinds(_ plan: SortPlan) -> [String: SortItem.Kind] {
     #expect(status["copiandose.pdf"]?.undoneBefore == false)
 }
 
+@Test func aUserMoveUndoneIsNotUndoneBefore() throws {
+    let dir = try TempDir()
+    let ws = try WorkspaceFixture.make(in: dir, folders: WorkspaceFixture.defaultFolders + ["2-Contratos", "4-Correspondencia"])
+    try dir.write("4-Correspondencia/Contrato telefonía.pdf", "contrato")
+    _ = Executor(workspace: ws).relocate(
+        [RelocationItem(source: "4-Correspondencia/Contrato telefonía.pdf", folder: "2-Contratos")], batch: "b_move")
+    _ = try Undoer(workspace: ws).undo(batch: "b_move")
+    // El usuario lo devuelve él mismo a la bandeja: el registro tiene un movimiento suyo deshecho con este hash.
+    let inbox = dir.url.appendingPathComponent("99-Pendiente/Contrato telefonía.pdf")
+    try FileManager.default.moveItem(at: dir.url.appendingPathComponent("4-Correspondencia/Contrato telefonía.pdf"),
+                                     to: inbox)
+    try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-60)], ofItemAtPath: inbox.path)
+    let undone = try Journal(workspace: ws).operations().filter { $0.state == .undone }
+    #expect(undone.map(\.isUserMove) == [true])
+    #expect(undone.map(\.sha256) == [Hashing.sha256("contrato")])
+
+    let item = try #require(try SortPipeline.status(workspace: ws).first)
+
+    #expect(item.sha256 == Hashing.sha256("contrato"))
+    #expect(item.undoneBefore == false)
+}
+
 @Test func theProfileTravelsWithEachRequestAndKeysTheCache() async throws {
     let dir = try TempDir()
     var ws = try WorkspaceFixture.make(in: dir)

@@ -63,4 +63,39 @@ struct JournalIndexTests {
         #expect(index.search("pdf").isEmpty)
         #expect(index.operation(at: "7-Facturas/Recibidas/Y.pdf") == nil)
     }
+
+    @Test func aFilingMovedByTheUserIsFoundAtItsCurrentPath() throws {
+        let dir = try TempDir()
+        let ws = try WorkspaceFixture.make(in: dir, folders: WorkspaceFixture.defaultFolders
+                                           + ["2-Contratos/Telefonía", "4-Correspondencia"])
+        try dir.write("99-Pendiente/scan.pdf", "contrato")
+        try dir.write("99-Pendiente/carta.pdf", "carta")
+        let filed = "4-Correspondencia/Contrato telefonía.pdf"
+        let executor = Executor(workspace: ws)
+        let filing = executor.apply([
+            ApprovedItem(action: FilingAction(kind: .file, source: "99-Pendiente/scan.pdf", destination: filed)),
+            ApprovedItem(action: FilingAction(kind: .file, source: "99-Pendiente/carta.pdf",
+                                              destination: "4-Correspondencia/Carta.pdf")),
+        ])
+        // Todo en el mismo segundo, como cuando el usuario mueve justo después de archivar.
+        _ = executor.relocate([RelocationItem(source: filed, folder: "2-Contratos")])
+        let last = executor.relocate([RelocationItem(source: "2-Contratos/Contrato telefonía.pdf",
+                                                     folder: "2-Contratos/Telefonía")])
+        let index = try Journal(workspace: ws).index()
+        let contract = try #require(index.operations.first { $0.id == filing.applied.first?.operationID })
+        let letter = try #require(index.operations.first { $0.id == filing.applied.last?.operationID })
+
+        #expect(index.currentPath(of: contract) == "2-Contratos/Telefonía/Contrato telefonía.pdf")
+        #expect(index.operation(at: "2-Contratos/Telefonía/Contrato telefonía.pdf")?.id == contract.id)
+        #expect(index.lastUserMove(at: "2-Contratos/Telefonía/Contrato telefonía.pdf")?.id
+                == last.moved.first?.operationID)
+        #expect(index.isSuperseded(contract))
+        #expect(index.operation(at: filed) == nil)
+        #expect(index.operation(at: "2-Contratos/Contrato telefonía.pdf") == nil)
+        // Lo que nadie movió sigue donde lo dejó Tria.
+        #expect(index.currentPath(of: letter) == "4-Correspondencia/Carta.pdf")
+        #expect(!index.isSuperseded(letter))
+        #expect(index.operation(at: "4-Correspondencia/Carta.pdf")?.id == letter.id)
+        #expect(index.lastUserMove(at: "4-Correspondencia/Carta.pdf") == nil)
+    }
 }

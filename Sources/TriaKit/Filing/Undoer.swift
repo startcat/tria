@@ -6,17 +6,35 @@ public struct SkippedUndo: Sendable, Equatable {
         /// La entrada del journal no es de fiar: ruta fuera del espacio, oculta o sin hash.
         case unsafe
         case failed(String)
+        /// Un movimiento del usuario no vuelve atrás: su carpeta de antes ya no existe, no es una carpeta o ya no se
+        /// puede entrar en ella (protegida, la bandeja, los duplicados…). No se vuelve a crear.
+        case previousFolderUnavailable
+        /// Un movimiento del usuario no vuelve atrás porque el documento ya no puede salir de donde está ahora: su
+        /// carpeta se ha vuelto protegida (o la bandeja, los duplicados…). Se queda donde está, como al moverlo.
+        case notMovable
     }
     public var operationID: String
     public var reason: Reason
+
+    public init(operationID: String, reason: Reason) {
+        self.operationID = operationID
+        self.reason = reason
+    }
 }
 
 public struct UndoReport: Sendable, Equatable {
     public var restored: [AppliedMove]
     public var skipped: [SkippedUndo]
+
+    public init(restored: [AppliedMove], skipped: [SkippedUndo]) {
+        self.restored = restored
+        self.skipped = skipped
+    }
 }
 
-/// Devuelve los ficheros a su sitio si siguen donde Tria los dejó y no han cambiado. Nunca sobrescribe.
+/// Devuelve los ficheros a su sitio si siguen donde se dejaron y no han cambiado. Nunca sobrescribe.
+/// Sigue los movimientos del usuario: lo que archivó Tria vuelve a la bandeja desde donde lo dejó él. Un movimiento
+/// del usuario vuelve a su carpeta de antes, que no se crea si ya no existe.
 public struct Undoer: Sendable {
     public let workspace: Workspace
     public let journal: Journal
@@ -28,23 +46,31 @@ public struct Undoer: Sendable {
 
     public func undo(batch: String) throws -> UndoReport {
         _ = try journal.reconcile()
-        let operations = try journal.operations().filter { $0.batch == batch && $0.state == .done }
-        return try restore(Array(operations.reversed()))
+        let operations = try journal.operations()
+        return try restore(Array(operations.filter { $0.batch == batch && $0.state == .done }.reversed()),
+                           chain: MoveChain(operations: operations))
     }
 
     /// Deshace una sola operación: «Deshacer y devolver a la bandeja» en la app (spec de la app, §5.2).
     public func undo(operation id: String) throws -> UndoReport {
         _ = try journal.reconcile()
-        return try restore(try journal.operations().filter { $0.id == id && $0.state == .done })
+        let operations = try journal.operations()
+        return try restore(operations.filter { $0.id == id && $0.state == .done },
+                           chain: MoveChain(operations: operations))
     }
 
-    private func restore(_ operations: [JournalOperation]) throws -> UndoReport {
+    /// `chain` va con todo el registro, en su orden: los movimientos del usuario que siguieron a una operación son de
+    /// otros lotes.
+    private func restore(_ operations: [JournalOperation], chain: MoveChain) throws -> UndoReport {
         var report = UndoReport(restored: [], skipped: [])
         for operation in operations {
+            // Lo que archivó Tria y movió después el usuario está donde lo dejó el último de esos movimientos.
+            let moves = operation.isUserMove ? [] : chain.userMoves(after: operation)
+            let place = moves.last?.to ?? operation.to
             // El journal es un fichero más del espacio (que puede estar en una unidad compartida): sus rutas no son
             // de fiar. Solo se deshace lo que tiene hash, sale de dentro de la raíz (o de la Papelera, si se envió
             // allí) y vuelve a dentro de la raíz.
-            guard let expected = operation.sha256, !expected.isEmpty, let current = currentURL(of: operation),
+            guard let expected = operation.sha256, !expected.isEmpty, let current = currentURL(of: operation, at: place),
                   workspace.containedURL(forRelative: operation.from) != nil else {
                 report.skipped.append(SkippedUndo(operationID: operation.id, reason: .unsafe))
                 continue
@@ -57,6 +83,10 @@ public struct Undoer: Sendable {
                 report.skipped.append(SkippedUndo(operationID: operation.id, reason: .modified))
                 continue
             }
+            if operation.isUserMove, let reason = userMoveProblem(operation) {
+                report.skipped.append(SkippedUndo(operationID: operation.id, reason: reason))
+                continue
+            }
             let target = Collision.uniqueRelativePath(operation.from, root: workspace.root)
             guard let targetURL = workspace.containedURL(forRelative: target) else {
                 report.skipped.append(SkippedUndo(operationID: operation.id, reason: .unsafe))
@@ -64,16 +94,21 @@ public struct Undoer: Sendable {
             }
             // Un fallo al mover se salta y se informa; el resto del lote se deshace igualmente (spec §10).
             do {
-                try FileManager.default.createDirectory(at: targetURL.deletingLastPathComponent(),
-                                                        withIntermediateDirectories: true)
+                // Lo de Tria vuelve a la bandeja, que se crea si falta; un movimiento del usuario nunca crea carpetas.
+                if !operation.isUserMove {
+                    try FileManager.default.createDirectory(at: targetURL.deletingLastPathComponent(),
+                                                            withIntermediateDirectories: true)
+                }
                 try FileManager.default.moveItem(at: current, to: targetURL)
             } catch {
                 report.skipped.append(SkippedUndo(operationID: operation.id, reason: .failed(error.localizedDescription)))
                 continue
             }
-            try journal.append(JournalEvent(id: operation.id, batch: operation.batch, op: operation.op,
-                                            state: .undone, from: operation.to, to: target, sha256: operation.sha256))
-            report.restored.append(AppliedMove(operationID: operation.id, from: operation.to, to: target))
+            try appendUndone(operation, from: place, to: target)
+            // Los movimientos del usuario de por medio también quedan deshechos: la cadena se cierra y el registro deja
+            // de buscar allí el documento.
+            for move in moves { try appendUndone(move, from: move.to, to: target) }
+            report.restored.append(AppliedMove(operationID: operation.id, from: place, to: target))
         }
         return report
     }
@@ -85,10 +120,32 @@ public struct Undoer: Sendable {
         return try undo(batch: batch.id)
     }
 
-    private func currentURL(of operation: JournalOperation) -> URL? {
+    /// `path` es donde está ahora lo que dejó `operation`: su `to` o el del último movimiento del usuario.
+    private func currentURL(of operation: JournalOperation, at path: String) -> URL? {
         if operation.op == .trash {
-            return PathSafety.isInTrash(operation.to) ? URL(fileURLWithPath: operation.to) : nil
+            return PathSafety.isInTrash(path) ? URL(fileURLWithPath: path) : nil
         }
-        return workspace.containedURL(forRelative: operation.to)
+        return workspace.containedURL(forRelative: path)
+    }
+
+    /// Un movimiento del usuario vuelve atrás con las mismas comprobaciones que al mover: el documento tiene que poder
+    /// salir de donde está ahora, y su carpeta de antes tiene que seguir siendo una carpeta en la que se puede entrar
+    /// (la carpeta y la ruta con el nombre). El motivo por el que no, o `nil` si puede volver.
+    private func userMoveProblem(_ operation: JournalOperation) -> SkippedUndo.Reason? {
+        let validator = Validator(workspace: workspace)
+        guard validator.destinationError(operation.to) == nil else { return .notMovable }
+        let folder = (operation.from as NSString).deletingLastPathComponent
+        guard validator.destinationError(folder) == nil, validator.destinationError(operation.from) == nil else {
+            return .previousFolderUnavailable
+        }
+        var isFolder: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: workspace.url(forRelative: folder).path, isDirectory: &isFolder),
+              isFolder.boolValue else { return .previousFolderUnavailable }
+        return nil
+    }
+
+    private func appendUndone(_ operation: JournalOperation, from: String, to: String) throws {
+        try journal.append(JournalEvent(id: operation.id, batch: operation.batch, op: operation.op, state: .undone,
+                                        from: from, to: to, sha256: operation.sha256, byUser: operation.byUser))
     }
 }
